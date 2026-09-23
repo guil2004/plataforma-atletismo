@@ -37,7 +37,35 @@ def cad(l):
     return round((c + (l.get("avg_fractional_cadence") or 0)) * 2)
 
 def keyOf(w):
-    return f"{w['date']}#{w['type']}#{w.get('rep_distance_m') or ''}#{w.get('n_reps') or ''}"
+    kd = (w.get('block_min') or '') if w.get('type')=='bloco' else (w.get('rep_distance_m') or '')
+    return f"{w['date']}#{w['type']}#{kd}#{w.get('n_reps') or ''}"
+
+def _median(a):
+    s=sorted(a); n=len(s)
+    return s[n//2] if n%2 else (s[n//2-1]+s[n//2])/2
+
+def normalize(workouts):
+    """Converte séries que são na verdade blocos por tempo (>=6 min, ou 2000/3000) em type 'bloco'."""
+    for w in workouts:
+        if w.get('type')!='series': continue
+        reps=[r for r in (w.get('reps') or []) if r]
+        if not reps: continue
+        rmin=round(_median(reps)/60)
+        if rmin>=6 or (w.get('rep_distance_m') or 0)>=2000:
+            w['type']='bloco'; w['block_min']=rmin
+            w.pop('rep_distance_m',None); w.pop('total_dist_m',None)
+    return workouts
+
+def rebuild_ann(workouts):
+    """Regra: bloco->Limiar individual; pista->VO2max; passadeira(distancia)->Limiar 4 mmol."""
+    ann={}
+    for w in workouts:
+        obj=None
+        if w.get('type')=='bloco': obj='Limiar individual'
+        elif w.get('sub_sport')=='track': obj='VO₂max'
+        elif w.get('sub_sport') in ('treadmill','indoor_running') and w.get('type')=='series': obj='Limiar 4 mmol'
+        if obj: ann[keyOf(w)]={'objetivo':obj,'_auto':True}
+    return ann
 
 def reconstruct(fit_bytes):
     """Recebe os bytes de um FIT e devolve uma sessão de séries, ou None."""
@@ -144,9 +172,6 @@ def main():
     email=os.environ.get("GARMIN_EMAIL"); pw=os.environ.get("GARMIN_PASSWORD")
     if not email or not pw:
         raise SystemExit("Faltam as secrets GARMIN_EMAIL / GARMIN_PASSWORD.")
-    print("A entrar na conta Garmin…")
-    g=Garmin(email, pw); g.login()
-
     dados=load_json("dados.json", {"meta":{},"workouts":[]})
     runs =load_json("runs.json",  {"meta":{},"cols":["date","dist_m","dur_s","type","hr"],"runs":[]})
     ann  =load_json("ann_defaults.json", {})
@@ -155,43 +180,50 @@ def main():
 
     start=state.get("last_date","2020-01-01")
     today=datetime.date.today().isoformat()
-    print(f"A procurar atividades de {start} a {today}…")
-    try:
-        acts=g.get_activities_by_date(start, today)
-    except Exception as e:
-        print("Falha a listar atividades:", e); raise
-
     have_series=set(keyOf(w) for w in dados["workouts"])
     have_runs=set((r[0],r[1],r[2]) for r in runs["runs"])
     n_new_runs=0; n_new_series=0
+    garmin_ok=False
 
-    for a in acts:
-        aid=str(a.get("activityId"))
-        if aid in processed: continue
-        tk=(a.get("activityType") or {}).get("typeKey","")
-        stl=a.get("startTimeLocal") or a.get("startTimeGMT") or ""
-        d=stl[:10]
-        if tk in RUNMAP and len(d)==10:
-            dist=a.get("distance") or 0      # metros (API)
-            dur =a.get("duration") or 0      # segundos (API)
-            hr  =a.get("averageHR")
-            dist_m=round(dist); dur_s=round(dur)
-            if dist_m>=300 and dur_s>=60 and (d,dist_m,dur_s) not in have_runs:
-                runs["runs"].append([d,dist_m,dur_s,RUNMAP[tk], round(hr) if hr else None])
-                have_runs.add((d,dist_m,dur_s)); n_new_runs+=1
-            # reconstrução repetição a repetição a partir do FIT original
-            try:
-                raw=g.download_activity(aid, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL)
-                fitb=extract_fit(raw)
-                if fitb:
-                    w=reconstruct(fitb)
-                    if w and keyOf(w) not in have_series:
-                        dados["workouts"].append(w); have_series.add(keyOf(w)); n_new_series+=1
-                        if w.get("sub_sport") in ("treadmill","indoor_running"):
-                            ann[keyOf(w)]={"objetivo":"Limiar 4 mmol","_auto":"passadeira"}
-            except Exception as e:
-                print(f"  (sem FIT utilizável para {aid}: {e})")
-        processed.add(aid)
+    # A ida ao Garmin pode falhar (ex.: 429 da Garmin). Se falhar, seguimos na
+    # mesma para normalizar/reclassificar e reconstruir o site com o que já há.
+    try:
+        print("A entrar na conta Garmin…")
+        g=Garmin(email, pw); g.login()
+        print(f"A procurar atividades de {start} a {today}…")
+        acts=g.get_activities_by_date(start, today)
+        for a in acts:
+            aid=str(a.get("activityId"))
+            if aid in processed: continue
+            tk=(a.get("activityType") or {}).get("typeKey","")
+            stl=a.get("startTimeLocal") or a.get("startTimeGMT") or ""
+            d=stl[:10]
+            if tk in RUNMAP and len(d)==10:
+                dist=a.get("distance") or 0      # metros (API)
+                dur =a.get("duration") or 0      # segundos (API)
+                hr  =a.get("averageHR")
+                dist_m=round(dist); dur_s=round(dur)
+                if dist_m>=300 and dur_s>=60 and (d,dist_m,dur_s) not in have_runs:
+                    runs["runs"].append([d,dist_m,dur_s,RUNMAP[tk], round(hr) if hr else None])
+                    have_runs.add((d,dist_m,dur_s)); n_new_runs+=1
+                try:
+                    raw=g.download_activity(aid, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL)
+                    fitb=extract_fit(raw)
+                    if fitb:
+                        w=reconstruct(fitb)
+                        if w and keyOf(w) not in have_series:
+                            dados["workouts"].append(w); have_series.add(keyOf(w)); n_new_series+=1
+                except Exception as e:
+                    print(f"  (sem FIT utilizável para {aid}: {e})")
+            processed.add(aid)
+        garmin_ok=True
+    except Exception as e:
+        print("AVISO: não consegui sincronizar com o Garmin desta vez:", e)
+        print("Sigo na mesma para corrigir e reconstruir com os dados existentes.")
+
+    # normalizar (blocos por tempo) e reclassificar TODA a base de dados
+    normalize(dados["workouts"])
+    ann = rebuild_ann(dados["workouts"])
 
     # ordenar + reindexar
     dados["workouts"].sort(key=lambda w: w["date"])
@@ -199,15 +231,20 @@ def main():
     dados["meta"]["n"]=len(dados["workouts"]); dados["meta"]["updated"]=today
     runs["runs"].sort(key=lambda r: r[0]); runs["meta"]["n"]=len(runs["runs"])
 
-    state["last_date"]=today
+    # Só avançamos a data se a sincronização correu bem (senão, tenta outra vez para a frente).
+    if garmin_ok:
+        state["last_date"]=today
     state["processed"]=sorted(processed)
 
     save_json("dados.json", dados)
     save_json("runs.json", runs)
     save_json("ann_defaults.json", ann)
     save_json("state.json", state)
-    print(f"Feito. +{n_new_series} sessões de séries, +{n_new_runs} corridas. "
-          f"Total: {len(dados['workouts'])} séries, {len(runs['runs'])} corridas.")
+    nblocos=sum(1 for w in dados["workouts"] if w.get("type")=="bloco")
+    nser=sum(1 for w in dados["workouts"] if w.get("type")=="series")
+    print(f"Feito ({'Garmin OK' if garmin_ok else 'sem Garmin hoje'}). "
+          f"+{n_new_series} séries novas, +{n_new_runs} corridas novas. "
+          f"Total: {nser} séries, {nblocos} blocos, {len(runs['runs'])} corridas.")
 
 if __name__=="__main__":
     main()

@@ -194,6 +194,7 @@ svg text{font-family:var(--sans)}
     <div class="brand"><div class="mark"></div><div><b>Histórico de estímulos</b><span>análise de treino · atletismo</span></div></div>
     <button class="navbtn on" data-view="overview" data-ico="grid">Visão geral</button>
     <button class="navbtn" data-view="distances" data-ico="target">Distâncias</button>
+    <button class="navbtn" data-view="blocos" data-ico="clock">Blocos (tempo)</button>
     <button class="navbtn" data-view="volume" data-ico="road">Volume geral</button>
     <button class="navbtn" data-view="objetivos" data-ico="layers">Objetivos fisiológicos</button>
     <button class="navbtn" data-view="evolucao" data-ico="trend">Evolução</button>
@@ -247,6 +248,7 @@ function icon(n){
     compare:'<path d="M12 3v18"/><path d="M7 8H4v8h3"/><path d="M17 8h3v8h-3"/>',
     upload:'<path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 20h16"/>',
     road:'<path d="M8 21l2-16"/><path d="M16 21l-2-16"/><path d="M12 8v2"/><path d="M12 14v2"/>',
+    clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     inbox:'<path d="M4 4h16v12H4z"/><path d="M4 12h5l1 2h4l1-2h5"/>',
     lane:'<ellipse cx="12" cy="12" rx="9" ry="6"/><ellipse cx="12" cy="12" rx="4.5" ry="2.4"/>',
     heart:'<path d="M12 20s-7-4.5-9.2-8.6C1.2 8.2 3 5 6 5c1.9 0 3.1 1.1 4 2.3C10.9 6.1 12.1 5 14 5c3 0 4.8 3.2 3.2 6.4C19 15.5 12 20 12 20z"/>'
@@ -261,7 +263,7 @@ function heat(m){ if(!m) return '#9AA0A6'; let b=HEAT[0]; for(const h of HEAT){ 
 const OBJ_DEFAULT=['Limiar 2 mmol','Limiar 4 mmol','Limiar individual','VO₂max','Capacidade aeróbia','Resistência aeróbia','Resistência específica','Velocidade','Velocidade específica','Capacidade anaeróbia','Potência neuromuscular','Recuperação','Competição','Outro'];
 const LS={data:'estimulos_dataset_v2',ann:'estimulos_annot_v1',cats:'estimulos_cats_v1',theme:'estimulos_theme_v1'};
 
-function keyOf(w){ let k=w.date+'#'+w.type+'#'+(w.rep_distance_m||'')+'#'+(w.n_reps||''); if(w.type==='pista') k+='#'+((w.title||'').slice(0,16))+'#'+(w.time_s||''); return k; }
+function keyOf(w){ const kd=w.type==='bloco'?(w.block_min||''):(w.rep_distance_m||''); let k=w.date+'#'+w.type+'#'+kd+'#'+(w.n_reps||''); if(w.type==='pista') k+='#'+((w.title||'').slice(0,16))+'#'+(w.time_s||''); return k; }
 function load(k,f){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):f;}catch(e){return f;} }
 function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
 
@@ -277,6 +279,7 @@ let state={
   season:'all',
   q:'',
   distance:null,
+  blockdur:null,
   selected: new Set(),
   open:null
 };
@@ -285,6 +288,9 @@ const savedTheme=load(LS.theme,null); if(savedTheme) document.documentElement.se
 /* ---------- helpers ---------- */
 function series(){ return state.workouts.filter(w=>w.type==='series'); }
 function pistas(){ return state.workouts.filter(w=>w.type==='pista'); }
+function blocos(){ return state.workouts.filter(w=>w.type==='bloco'); }
+function blockPace(w){ const rd=(w.rep_detail||[]).filter(r=>r.dist_m&&r.t_s); if(!rd.length)return null; const sp=rd.reduce((a,r)=>a+r.t_s/(r.dist_m/1000),0)/rd.length; return sp; }
+function blockDist(w){ const rd=(w.rep_detail||[]).filter(r=>r.dist_m); if(!rd.length)return null; return rd.reduce((a,r)=>a+r.dist_m,0); }
 function piso(w){ const s=w.sub_sport; if(s==='treadmill'||s==='indoor_running')return 'Passadeira'; if(s==='track')return 'Pista'; if(s==='generic')return 'Estrada'; return null; }
 function paceStr(spk){ if(!spk||isNaN(spk))return '—'; const m=Math.floor(spk/60),ss=Math.round(spk-m*60); return m+':'+String(ss).padStart(2,'0'); }
 function fmt(s){ if(s==null||isNaN(s))return '—'; s=+s; const m=Math.floor(s/60); const r=s-m*60; return m>0?(m+':'+r.toFixed(1).padStart(4,'0')):r.toFixed(1); }
@@ -304,6 +310,8 @@ function ann(w){ return state.ann[keyOf(w)]||{}; }
 function setAnn(w,patch){ const k=keyOf(w); state.ann[k]=Object.assign({},state.ann[k],patch); save(LS.ann,state.ann); }
 function suggestObj(w){
   const d=w.rep_distance_m||0, iv=w.interval_s||0;
+  if(w.type==='bloco') return 'Limiar individual';
+  if(w.sub_sport==='track') return 'VO₂max';
   if(w.sub_sport==='treadmill'||w.sub_sport==='indoor_running') return 'Limiar 4 mmol';
   if(d<=200) return 'Velocidade';
   if(d<=400) return iv>=120?'Capacidade anaeróbia':'Velocidade específica';
@@ -428,7 +436,7 @@ function vOverview(){
     return `<div class="brow"><div><span class="chip"><span class="cd" style="background:${heat(d)}"></span>${d} m</span></div>
       <div class="track"><div class="fill" style="width:${v/maxVol*100}%;background:${heat(d)}"></div></div>
       <div class="n num">${(v/1000).toFixed(1)} km</div></div>`;}).join('');
-  const recent=[...S].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(rowHtml).join('');
+  const recent=[...series().filter(w=>state.season==='all'||w.season===state.season),...blocos().filter(w=>state.season==='all'||w.season===state.season)].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(rowHtml).join('');
   const emptyRail = dists.length? '' : `<div class="empty">${icon('inbox')}<div>Sem sessões de séries nesta época.</div></div>`;
   const allPista=pistas(); const nPista=allPista.length;
   const pistaVol=allPista.reduce((a,w)=>a+(w.dist_m||0),0);
@@ -465,8 +473,8 @@ function rowHtml(w){
   return `<div class="srow" data-act="open" data-id="${w.id}">
     <span class="chk ${sel?'on':''}" data-act="sel" data-id="${w.id}">${sel?'✓':''}</span>
     <div class="when"><b>${w.date.slice(8,10)}/${w.date.slice(5,7)}</b>${w.season}</div>
-    <div class="desc">${w.type==='piramide'?'Pirâmide':(w.n_reps+' × '+w.rep_distance_m+' m')}
-      <small>${w.type==='piramide'?(w.steps.length+' patamares'):('rec. '+clock(w.interval_s)+' · '+pace(s.mean,w.rep_distance_m)+'/km')} ${obj?'· ':''}</small>${obj}${pzChip}${rpe}</div>
+    <div class="desc">${w.type==='piramide'?'Pirâmide':(w.type==='bloco'?(w.n_reps+' × '+w.block_min+'′'):(w.n_reps+' × '+w.rep_distance_m+' m'))}
+      <small>${w.type==='piramide'?(w.steps.length+' patamares'):(w.type==='bloco'?('rec. '+clock(w.interval_s)+(blockPace(w)?' · '+paceStr(blockPace(w))+'/km':'')):('rec. '+clock(w.interval_s)+' · '+pace(s.mean,w.rep_distance_m)+'/km'))} ${obj?'· ':''}</small>${obj}${pzChip}${rpe}</div>
     <div class="stat">
       <div class="s"><div class="n num">${fmt(s.best)}</div><div class="k">melhor</div></div>
       <div class="s"><div class="n num">${fmt(s.mean)}</div><div class="k">média</div></div>
@@ -512,7 +520,7 @@ function vDistances(){
 }
 
 function vObjetivos(){
-  const S=filtered().filter(w=>w.type==='series');
+  const S=filtered().filter(w=>w.type==='series'||w.type==='bloco');
   const byO={}; S.forEach(w=>{ const o=ann(w).objetivo||'Por classificar'; (byO[o]=byO[o]||[]).push(w); });
   const keys=Object.keys(byO).sort((a,b)=> (a==='Por classificar')-(b==='Por classificar') || a.localeCompare(b));
   const blocks=keys.map(o=>{
@@ -697,6 +705,7 @@ function pistaModal(w){
 function openModal(id){
   const w=state.workouts.find(x=>x.id===id); if(!w)return;
   if(w.type==='pista'){ document.getElementById('overlay').innerHTML=pistaModal(w); return; }
+  if(w.type==='bloco'){ document.getElementById('overlay').innerHTML=blocoModal(w); return; }
   const s=stats(w); const a=ann(w); const c=heat(w.rep_distance_m);
   const sug=w.type==='series'?suggestObj(w):'';
   const cats=state.cats.map(o=>`<option value="${o}" ${a.objetivo===o?'selected':''}>${o}</option>`).join('');
@@ -771,7 +780,7 @@ function renderCompareBar(){
 /* ---------- render ---------- */
 function render(){
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('on',b.dataset.view===state.view));
-  const V={overview:vOverview,distances:vDistances,volume:vVolume,objetivos:vObjetivos,evolucao:vEvolucao,comparar:vComparar,pista:vPista,importar:vImportar}[state.view]||vOverview;
+  const V={overview:vOverview,distances:vDistances,blocos:vBlocos,volume:vVolume,objetivos:vObjetivos,evolucao:vEvolucao,comparar:vComparar,pista:vPista,importar:vImportar}[state.view]||vOverview;
   document.getElementById('main').innerHTML=V();
   renderCompareBar();
   const q=document.getElementById('q'); if(q){ q.oninput=e=>{ state.q=e.target.value; if(['overview','objetivos'].includes(state.view)) render(); }; }
@@ -787,6 +796,7 @@ document.addEventListener('click',e=>{
   const act=t.dataset.act, id=+t.dataset.id;
   if(act==='theme'){ const cur=document.documentElement.getAttribute('data-theme'); const nx=cur==='dark'?'light':(cur==='light'?'dark':(window.matchMedia('(prefers-color-scheme: dark)').matches?'light':'dark')); document.documentElement.setAttribute('data-theme',nx); save(LS.theme,nx); return; }
   if(act==='dist'){ state.distance=+t.dataset.d; state.view='distances'; render(); return; }
+  if(act==='bdur'){ state.blockdur=+t.dataset.m; render(); return; }
   if(act==='sel'){ e.stopPropagation(); state.selected.has(id)?state.selected.delete(id):state.selected.add(id); render(); return; }
   if(act==='open'){ state.open=id; openModal(id); return; }
   if(act==='close'||act==='closebg'){ if(act==='closebg'&&e.target.closest('.modal'))return; document.getElementById('overlay').innerHTML=''; state.open=null; if(['objetivos','distances','evolucao','overview'].includes(state.view))render(); return; }
@@ -976,6 +986,80 @@ function vVolume(){
         <div class="note" style="margin-top:8px">Volume específico = soma dos metros das repetições (o teu Excel + as séries reconstruídas do Garmin). O volume geral vem de todas as corridas registadas no Garmin.</div>
       </section>
     </div>`;
+}
+
+
+/* ============ Blocos por tempo ============ */
+function vBlocos(){
+  const all=blocos();
+  if(!all.length) return topbar('Blocos por tempo','Treinos por tempo — 3×10′, 4×8′, etc. (tipicamente limiar).')+`<div class="empty">${icon('clock')}<div>Sem blocos por tempo.</div></div>`;
+  const byM={}; all.forEach(w=>{ (byM[w.block_min]=byM[w.block_min]||[]).push(w); });
+  const durs=Object.keys(byM).map(Number).sort((a,b)=>a-b);
+  if(!state.blockdur && durs.length) state.blockdur=durs.includes(10)?10:durs[0];
+  const M=state.blockdur;
+  const nav=durs.map(m=>`<button class="tile ${M===m?'on':''}" data-act="bdur" data-m="${m}" style="min-width:92px">
+     <div class="d">${m}<small>′</small></div><div class="meta">${byM[m].length} sess.</div><div class="bar" style="background:${heat(2000)}"></div></button>`).join('');
+  let detail='';
+  if(M && byM[M]){
+    let list=byM[M].filter(w=>state.season==='all'||w.season===state.season).sort((a,b)=>a.date.localeCompare(b.date));
+    const varc={}; list.forEach(w=>{const k=w.n_reps+'×'+M+'′'; varc[k]=(varc[k]||0)+1;});
+    const variants=Object.entries(varc).sort().map(([k,n])=>`<span class="chip"><span class="cd" style="background:${heat(2000)}"></span>${k} <span style="color:var(--faint)">×${n}</span></span>`).join(' ');
+    const evo=list.map(w=>({date:w.date, mean:blockPace(w), best:null, dist:2000})).filter(p=>p.mean);
+    const rows=list.map(rowHtml).join('');
+    const bestPace=Math.min(...list.map(w=>blockPace(w)).filter(v=>v));
+    detail=`<section class="card pad">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div><div class="h2" style="font-size:20px">Todos os blocos de ${M}′</div><p class="lead">${list.length} sessões · melhor ritmo médio ${bestPace?paceStr(bestPace):'—'}/km</p></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${variants}</div>
+      </div>
+      <div style="margin:16px 0 6px" class="h2">Evolução do ritmo (dentro do bloco)</div>
+      <p class="lead">min/km médio em cada sessão de ${M}′ (mais baixo = mais rápido para o mesmo tempo)</p>
+      <div style="overflow-x:auto;margin-top:8px">${evo.length?miniLine(evo,p=>p.mean,heat(2000),paceStr):'<div class="note">Sem ritmo por bloco (falta a distância nos dados).</div>'}</div>
+      <div class="h2" style="margin-top:18px">Sessões</div>
+      <div class="slist" style="margin-top:4px">${rows||'<div class="note">Sem sessões nesta época.</div>'}</div>
+    </section>`;
+  }
+  return topbar('Blocos por tempo','Escolhe a duração; dentro dela vês as sessões e a evolução do ritmo.')+`
+    <div class="grid">
+      <section class="card pad"><div class="h2">Duração do bloco</div><div class="rail" style="margin-top:12px">${nav}</div></section>
+      ${detail}
+    </div>`;
+}
+
+function blocoModal(w){
+  const s=stats(w); const a=ann(w); const sug=suggestObj(w);
+  const cats=state.cats.map(o=>`<option value="${o}" ${a.objetivo===o?'selected':''}>${o}</option>`).join('');
+  const rpeBtns=[1,2,3,4,5,6,7,8,9,10].map(n=>`<button data-act="rpe" data-id="${w.id}" data-n="${n}" class="${a.rpe==n?'on':''}">${n}</button>`).join('');
+  const bp=blockPace(w), bd=blockDist(w);
+  const detail=(w.rep_detail||[]).map(d=>{
+    const spk=(d.t_s&&d.dist_m)?d.t_s/(d.dist_m/1000):null;
+    return `<tr><td>${d.n}</td><td class="mono">${clock(d.t_s)}</td><td class="mono">${d.dist_m?(d.dist_m/1000).toFixed(2):'—'}</td><td class="mono">${spk?paceStr(spk):'—'}</td><td class="mono">${d.hr_avg||'—'}</td><td class="mono">${d.hr_max||'—'}</td><td class="mono">${d.rec_s?clock(d.rec_s):'—'}</td><td class="mono">${d.hr_end_rec||'—'}</td></tr>`;
+  }).join('');
+  return `<div class="scrim" data-act="closebg"><div class="modal" role="dialog" aria-modal="true">
+    <div class="mhead"><div><h3>${w.n_reps} × ${w.block_min}′</h3>
+      <div class="lead" style="margin-top:4px">${fdate(w.date)} · época ${w.season} · rec. ${clock(w.interval_s)}${piso(w)?' · '+piso(w):''} · <span class="chip"><span class="cd" style="background:${heat(2000)}"></span>bloco por tempo</span></div></div>
+      <button class="x" data-act="close" aria-label="Fechar">×</button></div>
+    <div class="pad" style="padding-top:6px">
+      <div class="statgrid" style="margin-bottom:14px">
+        <div class="c"><div class="n num">${w.n_reps} × ${w.block_min}′</div><div class="k">estrutura</div></div>
+        <div class="c"><div class="n num">${bp?paceStr(bp):'—'}</div><div class="k">ritmo médio /km</div></div>
+        <div class="c"><div class="n num">${bd?(bd/1000).toFixed(1):'—'}</div><div class="k">distância km</div></div>
+        <div class="c"><div class="n num">${w.hr_avg?Math.round(w.hr_avg):'—'}</div><div class="k">FC média</div></div>
+        <div class="c"><div class="n num">${w.hr_max?Math.round(w.hr_max):'—'}</div><div class="k">FC máx</div></div>
+        <div class="c"><div class="n num">${clock(w.total_time_s)}</div><div class="k">tempo total</div></div>
+      </div>
+      <div class="h2" style="font-size:13px;margin-bottom:6px">Cada bloco <span class="lead" style="font-weight:500">· do FIT</span></div>
+      <div class="tblwrap"><table class="tbl"><thead><tr><th>#</th><th>tempo</th><th>km</th><th>ritmo/km</th><th>FC méd</th><th>FC máx</th><th>rec.</th><th>FC fim rec.</th></tr></thead><tbody>${detail||'<tr><td colspan=8 class="note">Sem detalhe.</td></tr>'}</tbody></table></div>
+      <div class="hint" style="margin-top:12px"><b>Origem:</b> reconstruído do FIT como treino por tempo (${w.n_reps}×${w.block_min}′). Num bloco por tempo o que interessa é a distância/ritmo e a FC, não o tempo (que é fixo).</div>
+      <div class="h2" style="margin-top:16px">Classificação do treinador</div>
+      <div class="editrow"><label>Objetivo fisiológico</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select data-act="obj" data-id="${w.id}"><option value="">— por classificar —</option>${cats}</select>
+          ${sug?`<button class="pill" data-act="usesug" data-id="${w.id}" data-v="${sug}">Sugestão: ${sug}</button>`:''}
+        </div></div>
+      <div class="editrow"><label>Esforço percebido (RPE)</label><div class="rpe">${rpeBtns}</div></div>
+      <div class="editrow" style="align-items:flex-start"><label>Notas</label><textarea rows="2" data-act="nota" data-id="${w.id}">${(a.nota||'').replace(/</g,'&lt;')}</textarea></div>
+    </div></div>`;
 }
 
 /* ============ Leitor FIT (Garmin) — camada de ingestão ============ */
