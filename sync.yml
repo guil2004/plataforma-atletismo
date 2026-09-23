@@ -1,0 +1,42 @@
+name: Sincronizar Garmin
+
+on:
+  schedule:
+    - cron: '0 5 * * *'      # todos os dias às 05:00 UTC
+  workflow_dispatch: {}       # permite correr à mão no separador Actions
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+      - name: Sincronizar com o Garmin
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+        run: python sync.py
+      - name: Reconstruir a página
+        run: python build_page.py
+      - name: Guardar as alterações
+        run: |
+          git config user.name "garmin-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "Sem novidades hoje."
+          else
+            git commit -m "Sincronização Garmin $(date -u +%F)"
+            git push
+          fi
