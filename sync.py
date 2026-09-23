@@ -57,13 +57,22 @@ def normalize(workouts):
     return workouts
 
 def rebuild_ann(workouts):
-    """Regra: bloco->Limiar individual; pista->VO2max; passadeira(distancia)->Limiar 4 mmol."""
+    """Regra do treinador:
+       - bloco por tempo            -> Limiar individual
+       - série de distância na passadeira -> Limiar 4 mmol
+       - série de distância na pista/exterior -> VO2max
+    """
     ann={}
     for w in workouts:
         obj=None
-        if w.get('type')=='bloco': obj='Limiar individual'
-        elif w.get('sub_sport')=='track': obj='VO₂max'
-        elif w.get('sub_sport') in ('treadmill','indoor_running') and w.get('type')=='series': obj='Limiar 4 mmol'
+        t=w.get('type')
+        if t=='bloco':
+            obj='Limiar individual'
+        elif t=='series':
+            if w.get('sub_sport') in ('treadmill','indoor_running'):
+                obj='Limiar 4 mmol'
+            else:
+                obj='VO₂max'
         if obj: ann[keyOf(w)]={'objetivo':obj,'_auto':True}
     return ann
 
