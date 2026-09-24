@@ -262,10 +262,10 @@ function icon(n){
 const KNOWN_DIST=[100,150,200,300,400,500,600,800,1000,1200,1500,2000,3000,5000];
 const HEAT=[[100,'#E0245E'],[200,'#E0245E'],[300,'#E4572E'],[400,'#E8871E'],[500,'#C9A227'],[600,'#7FA33C'],[800,'#3FA08C'],[1000,'#2E8B84'],[1200,'#317FB0'],[1500,'#3457A6'],[2000,'#4B3F9E'],[3000,'#5B3A86'],[5000,'#5B3A86']];
 function heat(m){ if(!m) return '#9AA0A6'; let b=HEAT[0]; for(const h of HEAT){ if(Math.abs(h[0]-m)<Math.abs(b[0]-m)) b=h; } return b[1]; }
-const OBJ_DEFAULT=['Limiar 2 mmol','Limiar 4 mmol','Limiar individual','VO₂max','Capacidade aeróbia','Resistência aeróbia','Resistência específica','Velocidade','Velocidade específica','Capacidade anaeróbia','Potência neuromuscular','Recuperação','Competição','Outro'];
+const OBJ_DEFAULT=['Limiar 2 mmol','Limiar 4 mmol','Limiar individual','VO₂max','Capacidade aeróbia','Resistência aeróbia','Resistência específica','Velocidade','Velocidade específica','Capacidade anaeróbia','Potência neuromuscular','Recuperação','Competição','Teste de lactato','Outro'];
 const LS={data:'estimulos_dataset_v2',ann:'estimulos_annot_v1',cats:'estimulos_cats_v1',theme:'estimulos_theme_v1'};
 
-function keyOf(w){ const kd=w.type==='bloco'?(w.block_min||''):(w.rep_distance_m||''); let k=w.date+'#'+w.type+'#'+kd+'#'+(w.n_reps||''); if(w.type==='pista') k+='#'+((w.title||'').slice(0,16))+'#'+(w.time_s||''); return k; }
+function keyOf(w){ let kd=w.type==='bloco'?(w.block_min||''):w.type==='composto'?(w.label||''):w.type==='teste'?(w.test_name||''):(w.rep_distance_m||''); let k=w.date+'#'+w.type+'#'+kd+'#'+(w.n_reps||''); if(w.type==='pista') k+='#'+((w.title||'').slice(0,16))+'#'+(w.time_s||''); return k; }
 function load(k,f){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):f;}catch(e){return f;} }
 function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} }
 
@@ -314,6 +314,8 @@ function ann(w){ return state.ann[keyOf(w)]||{}; }
 function setAnn(w,patch){ const k=keyOf(w); state.ann[k]=Object.assign({},state.ann[k],patch); save(LS.ann,state.ann); }
 function suggestObj(w){
   const d=w.rep_distance_m||0, iv=w.interval_s||0;
+  if(w.type==='teste') return 'Teste de lactato';
+  if(w.type==='composto') return (w.sub_sport==='treadmill'||w.sub_sport==='indoor_running')?'Limiar 4 mmol':'VO₂max';
   if(w.type==='bloco') return 'Limiar individual';
   if(w.sub_sport==='track') return 'VO₂max';
   if(w.sub_sport==='treadmill'||w.sub_sport==='indoor_running') return 'Limiar 4 mmol';
@@ -326,9 +328,12 @@ function suggestObj(w){
 function seasons(){ return [...new Set(state.workouts.map(w=>w.season))].sort(); }
 function matchQ(w){
   const q=state.q.trim().toLowerCase(); if(!q) return true;
-  const hay=[w.rep_distance_m,w.n_reps+'x'+w.rep_distance_m,w.season,(ann(w).objetivo||''),(w.obs||''),(piso(w)||'')].join(' ').toLowerCase();
+  const hay=[w.rep_distance_m,w.n_reps+'x'+w.rep_distance_m,w.season,(ann(w).objetivo||''),(w.obs||''),(piso(w)||''),(w.label||''),(w.test_name||''),(w.garmin_name||'')].join(' ').toLowerCase();
   const num=q.match(/\d+/);
-  if(num && w.rep_distance_m && String(w.rep_distance_m)===num[0]) return true;
+  if(num){
+    if(w.rep_distance_m && String(w.rep_distance_m)===num[0]) return true;
+    if(w.type==='composto' && (w.dists||[]).map(String).includes(num[0])) return true;
+  }
   return hay.includes(q);
 }
 function filtered(){
@@ -435,7 +440,7 @@ function vPesquisa(){
   const tab=(c,label,n)=>`<button class="pill ${cat===c?'on':''}" data-act="pcat" data-c="${c.replace(/"/g,'&quot;')}">${label}${n!=null?` <span style="opacity:.55">${n}</span>`:''}</button>`;
   const tabs=tab('','Todas',null)+catList.map(o=>tab(o,o,present[o])).join('');
   // filtrar
-  let list=state.workouts.filter(w=>w.type==='series'||w.type==='bloco'||w.type==='pista');
+  let list=state.workouts.filter(w=>['series','bloco','pista','composto','teste'].includes(w.type));
   if(state.season!=='all') list=list.filter(w=>w.season===state.season);
   if(cat) list=list.filter(w=>(ann(w).objetivo||'')===cat);
   if(q){
@@ -444,9 +449,10 @@ function vPesquisa(){
         if(w.type==='series') return w.rep_distance_m===n;
         if(w.type==='bloco') return w.block_min===n;
         if(w.type==='pista') return Math.round(w.dist_m||0)===n;
+        if(w.type==='composto') return (w.dists||[]).includes(n);
         return false;
       }
-      const hay=[w.rep_distance_m, (w.block_min?w.block_min+'min':''), (ann(w).objetivo||''), (piso(w)||''), w.season, (w.title||'')].join(' ').toLowerCase();
+      const hay=[w.rep_distance_m, (w.block_min?w.block_min+'min':''), (ann(w).objetivo||''), (piso(w)||''), w.season, (w.title||''), (w.label||''), (w.test_name||''), (w.garmin_name||'')].join(' ').toLowerCase();
       return hay.includes(ql);
     });
   }
@@ -494,7 +500,7 @@ function vOverview(){
     return `<div class="brow"><div><span class="chip"><span class="cd" style="background:${heat(d)}"></span>${d} m</span></div>
       <div class="track"><div class="fill" style="width:${v/maxVol*100}%;background:${heat(d)}"></div></div>
       <div class="n num">${(v/1000).toFixed(1)} km</div></div>`;}).join('');
-  const recent=[...series().filter(w=>state.season==='all'||w.season===state.season),...blocos().filter(w=>state.season==='all'||w.season===state.season)].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(rowHtml).join('');
+  const recent=state.workouts.filter(w=>['series','bloco','composto','teste'].includes(w.type)&&(state.season==='all'||w.season===state.season)).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8).map(rowHtml).join('');
   const emptyRail = dists.length? '' : `<div class="empty">${icon('inbox')}<div>Sem sessões de séries nesta época.</div></div>`;
   const allPista=pistas(); const nPista=allPista.length;
   const pistaVol=allPista.reduce((a,w)=>a+(w.dist_m||0),0);
@@ -522,8 +528,8 @@ function vOverview(){
     </div>`;
 }
 
-function rowHtml(w){
-  const s=stats(w); const a=ann(w); const c=heat(w.rep_distance_m);
+function rowChrome(w,head,desc,statHtml){
+  const a=ann(w); const c=heat(w.type==='composto'?((w.dists||[])[0]):w.rep_distance_m);
   const sel=state.selected.has(w.id);
   const obj=a.objetivo?`<span class="chip"><span class="cd" style="background:${c}"></span>${a.objetivo}</span>`:'';
   const rpe=a.rpe?`<span class="tag">RPE ${a.rpe}</span>`:'';
@@ -531,17 +537,36 @@ function rowHtml(w){
   return `<div class="srow" data-act="open" data-id="${w.id}">
     <span class="chk ${sel?'on':''}" data-act="sel" data-id="${w.id}">${sel?'✓':''}</span>
     <div class="when"><b>${w.date.slice(8,10)}/${w.date.slice(5,7)}</b>${w.season}</div>
-    <div class="desc">${w.type==='piramide'?'Pirâmide':(w.type==='bloco'?(w.n_reps+' × '+w.block_min+'′'):(w.n_reps+' × '+w.rep_distance_m+' m'))}
-      <small>${w.type==='piramide'?(w.steps.length+' patamares'):(w.type==='bloco'?('rec. '+clock(w.interval_s)+(blockPace(w)?' · '+paceStr(blockPace(w))+'/km':'')):('rec. '+clock(w.interval_s)+' · '+pace(s.mean,w.rep_distance_m)+'/km'))} ${obj?'· ':''}</small>${obj}${pzChip}${rpe}</div>
-    <div class="stat">
-      <div class="s"><div class="n num">${fmt(s.best)}</div><div class="k">melhor</div></div>
-      <div class="s"><div class="n num">${fmt(s.mean)}</div><div class="k">média</div></div>
-    </div></div>`;
+    <div class="desc">${head}
+      <small>${desc} ${obj?'· ':''}</small>${obj}${pzChip}${rpe}</div>
+    <div class="stat">${statHtml}</div></div>`;
+}
+function rowHtml(w){
+  if(w.type==='composto'){
+    const segs=w.segments||[]; const first=segs[0]||{};
+    return rowChrome(w, w.label,
+      'sessão composta · rec. '+clock(w.interval_s),
+      `<div class="s"><div class="n num">${segs.length}</div><div class="k">partes</div></div>
+       <div class="s"><div class="n num">${fmt(first.best_s)}</div><div class="k">melhor ${first.value||''}</div></div>`);
+  }
+  if(w.type==='teste'){
+    return rowChrome(w, 'Teste '+(w.test_name||''),
+      (w.n_reps||0)+' patamares de ~5′ · teste de lactato',
+      `<div class="s"><div class="n num">${w.n_reps||0}</div><div class="k">patamares</div></div>`);
+  }
+  const s=stats(w);
+  const head = w.type==='piramide'?'Pirâmide':(w.type==='bloco'?(w.n_reps+' × '+w.block_min+'′'):(w.n_reps+' × '+w.rep_distance_m+' m'));
+  const desc = w.type==='piramide'?(w.steps.length+' patamares'):(w.type==='bloco'?('rec. '+clock(w.interval_s)+(blockPace(w)?' · '+paceStr(blockPace(w))+'/km':'')):('rec. '+clock(w.interval_s)+' · '+pace(s.mean,w.rep_distance_m)+'/km'));
+  return rowChrome(w, head, desc,
+    `<div class="s"><div class="n num">${fmt(s.best)}</div><div class="k">melhor</div></div>
+     <div class="s"><div class="n num">${fmt(s.mean)}</div><div class="k">média</div></div>`);
 }
 
+function segFor(w,D){ return (w.segments||[]).find(s=>s.value===D); }
 function vDistances(){
   const S=series();
   const byD={}; S.forEach(w=>{ const d=w.rep_distance_m; if(!d)return; (byD[d]=byD[d]||[]).push(w); });
+  state.workouts.filter(w=>w.type==='composto').forEach(w=>{ (w.dists||[]).forEach(d=>{ (byD[d]=byD[d]||[]).push(w); }); });
   const dists=Object.keys(byD).map(Number).sort((a,b)=>a-b);
   if(!state.distance && dists.length) state.distance=dists[0];
   const D=state.distance;
@@ -551,10 +576,11 @@ function vDistances(){
   if(D && byD[D]){
     let list=byD[D].filter(w=>state.season==='all'||w.season===state.season).sort((a,b)=>a.date.localeCompare(b.date));
     // variants
-    const varc={}; list.forEach(w=>{const k=w.n_reps+'×'+D; varc[k]=(varc[k]||0)+1;});
+    const varc={}; list.forEach(w=>{const k=w.type==='composto'?w.label:(w.n_reps+'×'+D); varc[k]=(varc[k]||0)+1;});
     const variants=Object.entries(varc).sort().map(([k,n])=>`<span class="chip"><span class="cd" style="background:${heat(D)}"></span>${k} <span style="color:var(--faint)">×${n}</span></span>`).join(' ');
-    const evo=list.map(w=>({date:w.date,mean:stats(w).mean,best:stats(w).best,dist:D}));
-    const allbest=Math.min(...list.map(w=>stats(w).best).filter(v=>v));
+    // evolução: só séries puras desta distância + o segmento correspondente dos compostos
+    const evo=list.map(w=>{ if(w.type==='composto'){ const sg=segFor(w,D); return sg?{date:w.date,mean:sg.mean_s,best:sg.best_s,dist:D}:null; } return {date:w.date,mean:stats(w).mean,best:stats(w).best,dist:D}; }).filter(Boolean);
+    const allbest=Math.min(...evo.map(e=>e.best).filter(v=>v));
     const rows=list.map(rowHtml).join('');
     detail=`<section class="card pad">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
@@ -578,7 +604,7 @@ function vDistances(){
 }
 
 function vObjetivos(){
-  const S=filtered().filter(w=>w.type==='series'||w.type==='bloco');
+  const S=filtered().filter(w=>['series','bloco','composto','teste'].includes(w.type));
   const byO={}; S.forEach(w=>{ const o=ann(w).objetivo||'Por classificar'; (byO[o]=byO[o]||[]).push(w); });
   const keys=Object.keys(byO).sort((a,b)=> (a==='Por classificar')-(b==='Por classificar') || a.localeCompare(b));
   const blocks=keys.map(o=>{
@@ -764,6 +790,8 @@ function openModal(id){
   const w=state.workouts.find(x=>x.id===id); if(!w)return;
   if(w.type==='pista'){ document.getElementById('overlay').innerHTML=pistaModal(w); return; }
   if(w.type==='bloco'){ document.getElementById('overlay').innerHTML=blocoModal(w); return; }
+  if(w.type==='composto'){ document.getElementById('overlay').innerHTML=compModal(w); return; }
+  if(w.type==='teste'){ document.getElementById('overlay').innerHTML=testeModal(w); return; }
   const s=stats(w); const a=ann(w); const c=heat(w.rep_distance_m);
   const sug=w.type==='series'?suggestObj(w):'';
   const cats=state.cats.map(o=>`<option value="${o}" ${a.objetivo===o?'selected':''}>${o}</option>`).join('');
@@ -829,7 +857,8 @@ function renderCompareBar(){
   const chosen=state.workouts.filter(w=>state.selected.has(w.id));
   if(!chosen.length){ el.innerHTML=''; return; }
   const pal=['#B23A2E','#2E8B84','#3457A6','#C9A227','#8E44AD','#E4572E'];
-  const items=chosen.map((w,i)=>`<span class="it"><b style="background:${pal[i%pal.length]}"></b>${w.n_reps}×${w.rep_distance_m} <button data-act="sel" data-id="${w.id}">×</button></span>`).join('');
+  const lbl=w=>w.type==='composto'?w.label:w.type==='teste'?('Teste '+(w.test_name||'')):w.type==='bloco'?(w.n_reps+'×'+w.block_min+'′'):(w.n_reps+'×'+w.rep_distance_m);
+  const items=chosen.map((w,i)=>`<span class="it"><b style="background:${pal[i%pal.length]}"></b>${lbl(w)} <button data-act="sel" data-id="${w.id}">×</button></span>`).join('');
   el.innerHTML=`<div class="cbar"><div class="items">${items}</div>
     <button class="btn ghost" data-act="clearsel">Limpar</button>
     <button class="btn primary" data-act="gocompare">Comparar (${chosen.length})</button></div>`;
@@ -998,11 +1027,12 @@ function vVolume(){
   const hours=filtered.reduce((a,x)=>a+x.dur,0)/3600;
   const avgKm=nRuns?totalKm/nRuns:0;
   // specific (series) volume for the same filter
-  const specKm=series().filter(w=>state.season==='all'||w.season===state.season).reduce((a,w)=>a+(w.total_dist_m||0),0)/1000;
+  const specW=state.workouts.filter(w=>w.type==='series'||w.type==='composto');
+  const specKm=specW.filter(w=>state.season==='all'||w.season===state.season).reduce((a,w)=>a+(w.total_dist_m||0),0)/1000;
   // by season (always all)
   const seasonKm={},seasonN={},seasonSpec={};
   RUNS.forEach(x=>{const s=rseason(x.date); seasonKm[s]=(seasonKm[s]||0)+x.dist/1000; seasonN[s]=(seasonN[s]||0)+1;});
-  series().forEach(w=>{ seasonSpec[w.season]=(seasonSpec[w.season]||0)+(w.total_dist_m||0)/1000; });
+  specW.forEach(w=>{ seasonSpec[w.season]=(seasonSpec[w.season]||0)+(w.total_dist_m||0)/1000; });
   const seasons=Object.keys(seasonKm).sort();
   const maxS=Math.max(...seasons.map(s=>seasonKm[s]));
   const seasonBars=seasons.map(s=>`<div class="brow" style="grid-template-columns:88px 1fr 96px"><div><span class="chip">${s}</span></div>
@@ -1120,6 +1150,75 @@ function blocoModal(w){
         </div></div>
       <div class="editrow"><label>Esforço percebido (RPE)</label><div class="rpe">${rpeBtns}</div></div>
       <div class="editrow" style="align-items:flex-start"><label>Notas</label><textarea rows="2" data-act="nota" data-id="${w.id}">${(a.nota||'').replace(/</g,'&lt;')}</textarea></div>
+    </div></div>`;
+}
+
+/* bloco de classificação partilhado (composto + teste) */
+function classifBlock(w){
+  const a=ann(w); const sug=suggestObj(w);
+  const cats=state.cats.map(o=>`<option value="${o}" ${a.objetivo===o?'selected':''}>${o}</option>`).join('');
+  const rpeBtns=[1,2,3,4,5,6,7,8,9,10].map(n=>`<button data-act="rpe" data-id="${w.id}" data-n="${n}" class="${a.rpe==n?'on':''}">${n}</button>`).join('');
+  return `<div class="h2" style="margin-top:16px">Classificação do treinador</div>
+    <div class="editrow"><label>Objetivo fisiológico</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select data-act="obj" data-id="${w.id}"><option value="">— por classificar —</option>${cats}</select>
+        ${sug?`<button class="pill" data-act="usesug" data-id="${w.id}" data-v="${sug}">Sugestão: ${sug}</button>`:''}
+      </div></div>
+    <div class="editrow"><label>Esforço percebido (RPE)</label><div class="rpe">${rpeBtns}</div></div>
+    <div class="editrow" style="align-items:flex-start"><label>Notas</label><textarea rows="2" data-act="nota" data-id="${w.id}">${(a.nota||'').replace(/</g,'&lt;')}</textarea></div>`;
+}
+
+function compModal(w){
+  const segs=w.segments||[];
+  const segBlocks=segs.map(sg=>{
+    const c=heat(sg.value);
+    const det=(sg.detail||[]);
+    const rows=det.length?det.map(d=>`<tr><td>${d.n}</td><td class="mono">${fmt(d.t_s)}</td><td class="mono">${d.dist_m||'—'}</td><td class="mono">${pace(d.t_s,sg.value)}</td><td class="mono">${d.hr_avg||'—'}</td><td class="mono">${d.hr_max||'—'}</td><td class="mono">${d.hr_end_rec||'—'}</td><td class="mono">${d.cad||'—'}</td></tr>`).join('')
+      : (sg.reps||[]).map((v,i)=>`<tr><td>${i+1}</td><td class="mono">${fmt(v)}</td><td class="mono">—</td><td class="mono">${pace(v,sg.value)}</td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td></tr>`).join('');
+    return `<div style="margin-top:14px">
+      <div class="h2" style="font-size:14px;margin-bottom:6px"><span class="cd" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>${sg.n_reps} × ${sg.value} m
+        <span class="lead" style="font-weight:500">· melhor ${fmt(sg.best_s)} · média ${fmt(sg.mean_s)}</span></div>
+      <div class="tblwrap"><table class="tbl"><thead><tr><th>#</th><th>tempo</th><th>dist</th><th>ritmo/km</th><th>FC méd</th><th>FC máx</th><th>FC fim rec.</th><th>cad.</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
+  }).join('');
+  return `<div class="scrim" data-act="closebg"><div class="modal" role="dialog" aria-modal="true">
+    <div class="mhead"><div><h3>${w.label}</h3>
+      <div class="lead" style="margin-top:4px">${fdate(w.date)} · época ${w.season} · rec. ${clock(w.interval_s)}${piso(w)?' · '+piso(w):''} · <span class="chip"><span class="cd" style="background:${heat((w.dists||[])[0])}"></span>sessão composta</span></div></div>
+      <button class="x" data-act="close" aria-label="Fechar">×</button></div>
+    <div class="pad" style="padding-top:6px">
+      <div class="statgrid" style="margin-bottom:8px">
+        <div class="c"><div class="n num">${segs.length}</div><div class="k">partes</div></div>
+        <div class="c"><div class="n num">${segs.reduce((a,s)=>a+(s.n_reps||0),0)}</div><div class="k">repetições</div></div>
+        <div class="c"><div class="n num">${clock(w.total_time_s)}</div><div class="k">tempo total</div></div>
+        <div class="c"><div class="n num">${w.hr_avg?Math.round(w.hr_avg):'—'}</div><div class="k">FC média</div></div>
+        <div class="c"><div class="n num">${w.hr_max?Math.round(w.hr_max):'—'}</div><div class="k">FC máx</div></div>
+      </div>
+      ${segBlocks}
+      <div class="hint" style="margin-top:12px"><b>Origem:</b> reconstruído do FIT como treino composto (${w.label})${w.garmin_name?` — nome no Garmin: “${w.garmin_name}”`:''}. Cada parte aparece também na sua distância.</div>
+      ${classifBlock(w)}
+    </div></div>`;
+}
+
+function testeModal(w){
+  const det=(w.rep_detail||[]);
+  const rows=det.length?det.map(d=>`<tr><td>${d.n}</td><td class="mono">${clock(d.t_s)}</td><td class="mono">${d.dist_m||'—'}</td><td class="mono">${d.dist_m?paceStr(d.t_s/(d.dist_m/1000)):'—'}</td><td class="mono">${d.hr_avg||'—'}</td><td class="mono">${d.hr_max||'—'}</td><td class="mono">${d.cad||'—'}</td></tr>`).join('')
+    : (w.reps||[]).map((v,i)=>`<tr><td>${i+1}</td><td class="mono">${clock(v)}</td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td><td class="mono">—</td></tr>`).join('');
+  return `<div class="scrim" data-act="closebg"><div class="modal" role="dialog" aria-modal="true">
+    <div class="mhead"><div><h3>Teste ${w.test_name||''}</h3>
+      <div class="lead" style="margin-top:4px">${fdate(w.date)} · época ${w.season}${piso(w)?' · '+piso(w):''} · <span class="chip"><span class="cd" style="background:${heat(3000)}"></span>teste de lactato</span></div></div>
+      <button class="x" data-act="close" aria-label="Fechar">×</button></div>
+    <div class="pad" style="padding-top:6px">
+      <div class="statgrid" style="margin-bottom:8px">
+        <div class="c"><div class="n num">${w.n_reps||0}</div><div class="k">patamares</div></div>
+        <div class="c"><div class="n num">~5′</div><div class="k">por patamar</div></div>
+        <div class="c"><div class="n num">${clock(w.total_time_s)}</div><div class="k">tempo total</div></div>
+        <div class="c"><div class="n num">${w.hr_avg?Math.round(w.hr_avg):'—'}</div><div class="k">FC média</div></div>
+        <div class="c"><div class="n num">${w.hr_max?Math.round(w.hr_max):'—'}</div><div class="k">FC máx</div></div>
+      </div>
+      <div class="h2" style="font-size:13px;margin-bottom:6px">Patamares <span class="lead" style="font-weight:500">· do FIT</span></div>
+      <div class="tblwrap"><table class="tbl"><thead><tr><th>#</th><th>tempo</th><th>dist</th><th>ritmo/km</th><th>FC méd</th><th>FC máx</th><th>cad.</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="hint" style="margin-top:12px"><b>Teste de lactato (Amândio):</b> patamares de ~5 min. Não é uma série de treino — fica marcado como teste e não é convertido em distância.${w.garmin_name?` Nome no Garmin: “${w.garmin_name}”.`:''}</div>
+      ${classifBlock(w)}
     </div></div>`;
 }
 
